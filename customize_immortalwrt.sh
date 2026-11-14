@@ -6,46 +6,64 @@
 # See /LICENSE for more information
 # Description: Build OpenWrt using GitHub Actions
 #=================================================
-#1. Modify default IP
-sed -i 's/192.168.1.1/192.168.16.1/g' /builder/openwrt/package/base-files/files/bin/config_generate
+set -e
 
-#2. 修改默认皮肤
-#sed -i 's/+luci-theme-bootstrap/+luci-theme-argon/g' /builder/openwrt/feeds/luci/collections/luci/Makefile
+BR=/builder/openwrt
+WS=$(CDPATH= cd "$(dirname "$0")" && pwd)
 
-#3. Replace with JerryKuKu’s Argon
-#rm /builder/openwrt/package/lean/luci-theme-argon -rf
+# 1) 默认 LAN 地址、主机名、默认主题
+sed -i 's/192.168.2.1/192.168.16.1/g' "$BR/package/base-files/files/bin/config_generate"
+sed -i 's/192.168.1.1/192.168.16.1/g' "$BR/package/base-files/files/bin/config_generate"
+sed -i 's/ImmortalWrt/RedmiWrt/g' "$BR/package/base-files/files/bin/config_generate"
+sed -i 's/+luci-theme-bootstrap/+luci-theme-argon/g' "$BR/feeds/luci/collections/luci/Makefile" 2>/dev/null || true
 
-#4. Modify hostname
-sed -i 's/ImmortalWrt/RedmiWrt/g' /builder/openwrt/package/base-files/files/bin/config_generate
+# 2) 关闭与矩阵重复的重型代理，控制固件体积
+for p in luci-app-openclash luci-app-passwall luci-app-ssr-plus luci-app-daed; do
+    sed -i "s/^CONFIG_PACKAGE_${p}=y/# CONFIG_PACKAGE_${p} is not set/" "$BR/.config" || true
+done
+sed -i 's/^CONFIG_PACKAGE_luci-app-passwall_INCLUDE_/# CONFIG_PACKAGE_luci-app-passwall_INCLUDE_/' "$BR/.config" || true
 
-# ========== 新增：生成uci-defaults 首次开机自动配置 LAN IP + WiFi ==========
-# 源码内files目录，编译时打包进固件
-mkdir -p /builder/openwrt/files/etc/uci-defaults
+# 3) 追加核心插件矩阵
+cat "$WS/matrix-packages.config" >> "$BR/.config"
 
-cat > /builder/openwrt/files/etc/uci-defaults/99-set-default-wifi-ip <<'EOF'
+# 4) Lucky 源码：固定 commit + 官方发布包 SHA256
+if [ ! -d "$BR/package/luci-app-lucky" ]; then
+    git clone https://github.com/gdy666/luci-app-lucky.git "$BR/package/luci-app-lucky"
+    git -C "$BR/package/luci-app-lucky" checkout b07f65c28bb5fa3da1fea4b8af5ce24a1488e79a
+    sed -i 's|PKG_HASH:=skip|PKG_HASH:=e79982e1733d51b3237838e251bbc606e65aad1904884fb65a427d57bb6f83e3|' \
+        "$BR/package/luci-app-lucky/lucky/Makefile"
+fi
+
+# 5) Tailscale 社区 LuCI：24.10 / 237 的官方 feed 没有时才补源码
+if [ ! -d "$BR/feeds/luci/applications/luci-app-tailscale-community" ] && \
+   [ ! -d "$BR/feeds/luci/luci-app-tailscale-community" ]; then
+    if [ ! -d "$BR/package/luci-app-tailscale-community" ]; then
+        git clone https://github.com/Tokisaki-Galaxy/luci-app-tailscale-community.git \
+            "$BR/package/luci-app-tailscale-community"
+    fi
+fi
+
+# 6) 首启 overlay：AGH 预置 + DNS 链 + 中文/Argon
+mkdir -p "$BR/files"
+cp -a "$WS/matrix-files/." "$BR/files/"
+chmod +x "$BR/files/etc/uci-defaults/99-matrix"
+
+# 7) 首启 WiFi（首次登录后请立即修改密码）
+cat > "$BR/files/etc/uci-defaults/99-set-default-wifi-ip" <<'EOF'
 #!/bin/sh
-
-# 设置LAN IP
-# uci set network.lan.ipaddr='192.168.16.1'
-# uci set network.lan.netmask='255.255.255.0'
-
-# 2.4G radio0
 uci set wireless.radio0.disabled='0'
 uci set wireless.radio0.country='CN'
 uci set wireless.default_radio0.ssid='Redmi-2.4G'
 uci set wireless.default_radio0.encryption='psk2+ccmp'
-uci set wireless.default_radio0.key='qwer1234'
-
-# 5G radio1
+uci set wireless.default_radio0.key='ChangeMe12345'
 uci set wireless.radio1.disabled='0'
 uci set wireless.radio1.country='CN'
 uci set wireless.default_radio1.ssid='Redmi-5G'
 uci set wireless.default_radio1.encryption='psk2+ccmp'
-uci set wireless.default_radio1.key='qwer1234'
-
-uci commit network
+uci set wireless.default_radio1.key='ChangeMe12345'
 uci commit wireless
 exit 0
 EOF
+chmod +x "$BR/files/etc/uci-defaults/99-set-default-wifi-ip"
 
-chmod +x /builder/openwrt/files/etc/uci-defaults/99-set-default-wifi-ip
+echo "matrix customization done: HomeProxy + Lucky + Tailscale + AdGuardHome"

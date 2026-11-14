@@ -1,0 +1,40 @@
+#!/bin/sh
+# 首次启动：中文、Argon、DNS 链（dnsmasq -> AdGuard Home 5353 -> sing-box 5333）
+uci set luci.main.lang='zh_cn'
+uci set luci.main.mediaurlbase='/luci-static/argon'
+uci set system.@system[0].hostname='RedmiWrt'
+uci set system.@system[0].timezone='CST-8'
+uci set system.@system[0].zonename='Asia/Shanghai'
+uci commit luci
+uci commit system
+
+# AdGuard Home 服务启用
+uci set adguardhome.config.enabled='1'
+uci commit adguardhome 2>/dev/null
+
+# dnsmasq：关闭自身解析，交给 AGH；并声明 DNS 已被劫持，避免 HomeProxy 二次劫持到 5333
+uci set dhcp.@dnsmasq[0].noresolv='1'
+uci set dhcp.@dnsmasq[0].dns_redirect='1'
+uci -q delete dhcp.@dnsmasq[0].server
+uci add_list dhcp.@dnsmasq[0].server='127.0.0.1#5353'
+uci commit dhcp
+
+# Tailscale：预置 LAN 网段 + 放行 UDP 41641
+uci set tailscale.settings.advertise_routes='192.168.16.0/24'
+uci commit tailscale 2>/dev/null
+uci add firewall rule >/dev/null 2>&1
+uci set firewall.@rule[-1].name='Allow-Tailscale-41641'
+uci set firewall.@rule[-1].src='wan'
+uci set firewall.@rule[-1].proto='udp'
+uci set firewall.@rule[-1].dest_port='41641'
+uci set firewall.@rule[-1].target='ACCEPT'
+uci commit firewall
+
+# HomeProxy：放行 Tailscale WireGuard 源端口 41641，避免被 tproxy 捕获
+if [ -f /etc/homeproxy/scripts/firewall_post.ut ] && \
+   ! grep -q 'udp sport 41641' /etc/homeproxy/scripts/firewall_post.ut; then
+    sed -i '/^chain homeproxy_mangle_output {/a\	udp sport 41641 counter return' \
+        /etc/homeproxy/scripts/firewall_post.ut
+fi
+
+exit 0

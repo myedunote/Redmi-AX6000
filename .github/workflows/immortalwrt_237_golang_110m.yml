@@ -272,6 +272,7 @@ jobs:
         
         # Modify default IP 将默认IP地址 192.168.6.1 修改为 192.168.2.1
         sed -i 's/192.168.6.1/192.168.2.1/g' /builder/openwrt/package/base-files/files/bin/config_generate
+        chmod +x ./customize_immortalwrt.sh && ./customize_immortalwrt.sh
         cd /builder/openwrt && make defconfig
 
     - name: Download package
