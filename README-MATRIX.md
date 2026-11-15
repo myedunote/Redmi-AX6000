@@ -2,6 +2,26 @@
 
 这套改动基于你的 fork `myedunote/Redmi-AX6000`（上游 `saltdion/Redmi-AX6000-110m`），保留 **6 条构建流水线**，把 HomeProxy / Lucky / Tailscale / AdGuard Home 做成统一矩阵注入。
 
+## 构建状态
+
+[![LEDE_110m](https://github.com/myedunote/Redmi-AX6000/actions/workflows/LEDE_110m.yml/badge.svg)](https://github.com/myedunote/Redmi-AX6000/actions/workflows/LEDE_110m.yml)
+[![immortalwrt_110m](https://github.com/myedunote/Redmi-AX6000/actions/workflows/immortalwrt_110m.yml/badge.svg)](https://github.com/myedunote/Redmi-AX6000/actions/workflows/immortalwrt_110m.yml)
+[![compact_24.10](https://github.com/myedunote/Redmi-AX6000/actions/workflows/immortalwrt_110m_compact_24.10.yml/badge.svg)](https://github.com/myedunote/Redmi-AX6000/actions/workflows/immortalwrt_110m_compact_24.10.yml)
+[![compact_25.12](https://github.com/myedunote/Redmi-AX6000/actions/workflows/immortalwrt_110m_compact_25.12.yml/badge.svg)](https://github.com/myedunote/Redmi-AX6000/actions/workflows/immortalwrt_110m_compact_25.12.yml)
+[![237_110m](https://github.com/myedunote/Redmi-AX6000/actions/workflows/immortalwrt_237_110m.yml/badge.svg)](https://github.com/myedunote/Redmi-AX6000/actions/workflows/immortalwrt_237_110m.yml)
+[![237_golang](https://github.com/myedunote/Redmi-AX6000/actions/workflows/immortalwrt_237_golang_110m.yml/badge.svg)](https://github.com/myedunote/Redmi-AX6000/actions/workflows/immortalwrt_237_golang_110m.yml)
+
+最近一次矩阵构建（commit `012ed67`）：
+
+| 流水线 | 结果 | 说明 |
+|---|---|---|
+| `immortalwrt_237_110m` | ✅ success | |
+| `immortalwrt_110m` | ✅ success | |
+| `immortalwrt_110m_compact_24.10` | ✅ success | |
+| `immortalwrt_110m_compact_25.12` | ✅ success | 主力自用版本 |
+| `immortalwrt_237_golang_110m` | ✅ success | |
+| `LEDE_110m` | ❌ failure | `Build firmware` exit 2；同一 commit 在更早一批中成功，判断为上游 master 漂移/瞬时失败，已加失败注解与日志捕获 |
+
 ## 一、改了哪些文件
 
 | 文件 | 作用 |
@@ -80,3 +100,26 @@ UU_PERSIST_INSTALL_CONFIRM=PERSIST_OPENWRT_UU sh platforms/openwrt/install.sh
 - 24.10 / 237 没有 `luci-app-adguardhome`，AGH 只能用它自己的 `:3000` 面板。
 - Lucky 上游 `PKG_HASH:=skip` 已替换为固定 SHA256；换架构需换哈希。
 - 所有插件均来自官方 feed 或固定 commit，构建可复现。
+
+## 八、构建失败排查
+
+1. 打开失败的 run，先看哪个 step 变红；矩阵相关问题通常出现在 `Configuration Customization`，编译问题在 `Build firmware`。
+2. **公开注解（无需登录）**：`Build firmware` 失败时会输出 `::error::build failed rc=...: <首条错误>`，在 run 页面顶部或 `check-runs` annotations 里可见。
+3. **下载完整日志（需登录 GitHub）**：run 页面右上角 **Download log archive**，解压后看 `Build firmware` 的 txt。
+4. **只重跑失败任务**：失败 run 右上角 **Re-run failed jobs**，不会影响其他 5 条。
+5. **只构建某一条**：Actions → 左侧选 workflow → **Run workflow**。
+
+### 本轮已加的诊断能力
+
+- `Build firmware` 现在会 `tee build.log`，失败时自动单线程重试一次（`make -j1 V=s`）。
+- 二次失败会把首条 `error:` / `No rule to make target` / `undefined reference` 写成公开 `::error::` 注解，方便直接定位包名。
+- 完整日志仍在 runner 上，需要登录下载归档。
+
+### 常见原因
+
+| 现象 | 可能原因 | 处理 |
+|---|---|---|
+| `Configuration Customization` 失败 | 矩阵包名在该源码树不存在、Lucky 克隆失败 | 看 defconfig 警告，确认 feed 是否包含该包 |
+| `Build firmware` 在先前的 run 成功、后来失败 | LEDE/237 追踪的 master 漂移，或下载超时 | Re-run failed jobs；仍失败则看注解里的包名 |
+| `No space left on device` | runner 磁盘不足 | 已用 maximize-build-space；可减少矩阵包 |
+| `lede` 构建成功但刷机不进系统 | LEDE 产物是普通 AX6000 布局 | 不要刷到 110M U-Boot，改用 5 条 ImmortalWrt 版本 |

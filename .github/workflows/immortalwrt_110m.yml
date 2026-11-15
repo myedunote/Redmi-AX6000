@@ -236,7 +236,20 @@ jobs:
       run: |
         echo -e "$(nproc) thread build."
         # 先尝试多线程全速编译，如果失败（返回非 0 状态码），则触发单线程编译，并打印最详细的 V=s 日志
-        make -j$(nproc) || make -j1 V=s
+        set +e
+        make -j$(nproc) 2>&1 | tee build.log
+        rc=${PIPESTATUS[0]}
+        if [ "$rc" -ne 0 ]; then
+          echo "parallel build failed (rc=$rc), retrying single-threaded..."
+          make -j1 V=s 2>&1 | tee -a build.log
+          rc=${PIPESTATUS[0]}
+        fi
+        if [ "$rc" -ne 0 ]; then
+          err=$(grep -m1 -E 'Error [0-9]|error:|No rule to make target|fatal error|undefined reference' build.log | head -c 900)
+          echo "::error::build failed rc=$rc: $err"
+          tail -n 30 build.log
+          exit "$rc"
+        fi
 
     - name: Check Space
       run: |
